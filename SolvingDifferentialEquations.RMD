@@ -175,28 +175,508 @@ matplot(out[,"time"], out[, c("u1", "u7")], type = "l", lwd = 2, col = c("black"
 abline(v = c(1.23, 1.68), lty = 2)
 legend("bottomright", col = c("black", "grey"), lwd = 2, legend = c("u1", "u7"))
 
+# A Stiff Chemical Example------------------------------------------------------
+# External Variables------------------------------------------------------------
+
+load(file = "Light.rda")
+head(Light, n = 4)
+irradiance <- approxfun(Light)
+irradiance(seq(from = 0, to = 1, by = 0.25))
+k3 <- 1e-11; k2 <- 1e10; k1a <- 1e-30
+k1b <- 1; sigma <- 1e11
+yini <- c(O = 0, NO = 1.3e8, NO2 = 5e11, O3 = 8e11)
+chemistry <- function(t, y, parms) {
+    with(as.list(y), {
+    radiation <- irradiance(t)
+    k1 <- k1a + k1b*radiation
+    dO <- k1*NO2 - k2*O
+    dNO <- k1*NO2 - k3*NO*O3 + sigma
+    dNO2 <- -k1*NO2 + k3*NO*O3
+    dO3 <- k2*O - k3*NO*O3
+    list(c(dO, dNO, dNO2, dO3), radiation = radiation)
+    })
+}
+times <- seq(from = 0, to = 5, by = 0.01)
+out <- ode(func = chemistry, parms = NULL, y = yini,
+times = times, method = "bdf")
+plot(out, type = "l", lwd=2)
+
+## Discontinuous Equations, Events----------------------------------------------
+# Pharmacokinetic Models--------------------------------------------------------
+# A Two-Compartment Model Describing Oral Drug Intake---------------------------
+a <- 6; b <- 0.6
+yini <- c(intestine = 0, blood = 0)
+pharmacokinetics <- function(t, y, p) {
+    if ( (24*t) %% 24 <= 1)
+    uptake <- 2
+    else
+    uptake <- 0
+    dy1 <- - a* y[1] + uptake
+    dy2 <- a* y[1] - b *y[2]
+    list(c(dy1, dy2))
+}
+
+times <- seq(from = 0, to = 10, by = 1/24)
+out <- ode(func = pharmacokinetics, times = times,
+y = yini, parms = NULL)
+plot(out, lwd = 2, xlab = "day")
+
+times <- seq(0, 10, by = 3/24)
+out2 <- ode(func = pharmacokinetics, times = times,
+y = yini, parms = NULL, method = "impAdams")
+plot(out2, lwd = 2, xlab = "days")
+
+# A One-Compartment Model Describing Drug Injection-----------------------------
+b <- 0.6
+yini <- c(blood = 0)
+pharmaco2 <- function(t, blood, p) {
+    dblood <- - b * blood
+    list(dblood)
+}
+
+injectevents <- data.frame(var = "blood",
+time = 0:20,
+value = 40,
+method = "add")
+head(injectevents)
+
+times <- seq(from = 0, to = 10, by = 1/24)
+out2 <- ode(func = pharmaco2, times = times, y = yini,
+parms = NULL, method = "impAdams",
+events = list(data = injectevents))
+
+plot(out2, lwd = 2, xlab="days")
+
+# A Bouncing Ball---------------------------------------------------------------
+library(deSolve)
+yini <- c(height = 0, velocity = 10)
+ball <- function(t, y, parms) {
+    dy1 <- y[2]
+    dy2 <- -9.8
+    list(c(dy1, dy2))
+}
+
+rootfunc <- function(t, y, parms) y[1]
+
+eventfunc <- function(t, y, parms) {
+    y[1] <- 0
+    y[2] <- -0.9*y[2]
+    return(y)
+}
+
+times <- seq(from = 0, to = 20, by = 0.01)
+out <- ode(times = times, y = yini, func = ball,
+parms = NULL, rootfun = rootfunc,
+events = list(func = eventfunc, root = TRUE))
+
+plot(out, which = "height", lwd = 2,
+main = "bouncing ball", ylab = "height")
+
+# Temperature in a Climate-Controlled Room--------------------------------------
+yini <- c(temp = 18, heating_on = 1)
+
+temp <- function(t, y, parms) {
+    dy1 <- ifelse(y[2] == 1, 1.0, -0.5)
+    dy2 <- 0
+    list(c(dy1, dy2))
+}
+
+rootfunc <- function(t, y, parms) c(y[1]-18, y[1]-20)
+
+eventfunc <- function(t, y, parms) {
+    y[1] <- y[1]
+    y[2] <- ! y[2]
+    return(y)
+}
+times <- seq(from = 0, to = 20, by = 0.1)
+out <- lsode(times = times, y = yini, func = temp,
+parms = NULL, rootfun = rootfunc,
+events = list(func = eventfunc, root = TRUE))
+
+plot(out, lwd = 2)
+
+attributes(out)$troot
+
+##  Method Selection------------------------------------------------------------
+# The van der Pol Equation------------------------------------------------------
+
+yini <- c(y = 2, dy = 0)
+Vdpol <- function(t, y, mu)
+list(c(y[2], mu * (1 - y[1]^2) * y[2] - y[1]))
+
+times <- seq(from = 0, to = 30, by = 0.01)
+nonstiff <- ode(func = Vdpol, parms = 1, y = yini,
+times = times, verbose = TRUE)
+interm <- ode(func = Vdpol, parms = 10, y = yini,
+times = times, verbose = TRUE)
+stiff <- ode(func = Vdpol, parms = 1000, y = yini,
+times =0:2000, verbose = TRUE)
+
+# Printing the Diagnostics of the Solutions-------------------------------------
+diagnostics(nonstiff)
+
+# Timings-----------------------------------------------------------------------
+library(deTestSet)
+system.time(ode(func = Vdpol, parms = 10, y = yini, times = times, method = "ode45"))
+system.time(ode(func = Vdpol, parms = 10, y = yini, times = times, method = "adams"))
+system.time(ode(func = Vdpol, parms = 10, y = yini, times = times, method = "bdf"))
+system.time(radau(func = Vdpol, parms = 10, y = yini, times = times))
+system.time(bimd(func = Vdpol, parms = 10, y = yini, times = times))
+system.time(mebdfi(func = Vdpol, parms = 10, y = yini, times = times))
+
+# Work Precision Diagrams and mescd---------------------------------------------
 
 
 ```
 
 ##  Solving Differential Algebraic Equations in R-------------------------------
 ```{r, echo=FALSE}
+## Differential Algebraic Equation Solvers in R---------------------------------
+# daspk(y, times, parms, dy, res, ...)
+# mebdfi(y, times, parms, dy, res, nind, ...)
+# radau(y, times, func, parms, nind, mass, ...)
+# gamd (y, times, func, parms, nind, mass, ...)
+# bimd (y, times, func, parms, nind, mass, ...)
 
+## A Simple DAE of Index 2------------------------------------------------------
+# Solving the DAEs in General Implicit Form-------------------------------------
+resdae <- function (t, y, dy, p) {
+    r1 <- dy[1] - y[2]
+    r2 <- y[1] - cos(t)
+    list(c(r1, r2))
+}
+
+library(deTestSet)
+yini <- c(y1 = cos(0), y2 = -sin(0))
+dyini <- c(-sin(0), -cos(0))
+times <- seq(from = 0, to = 10, by = 0.1)
+index <- c(1, 1, 0)
+out1 <- mebdfi(times = times, res = resdae, y = yini, atol = 1e-10, rtol = 1e-10, dy = dyini, parms = NULL, nind = index)
+max (abs(out1[,"y1"] - cos(times)), abs(out1[,"y2"] + sin(times)))
+
+#  Solving the DAEs in Linearly Implicit Form-----------------------------------
+fundae <- function (t, y, p) {
+    f1 <- y[2]
+    f2 <- y[1] - cos(t)
+    list(c(f1, f2))
+}
+M <- matrix(nrow = 2, ncol = 2, data = c(1, 0, 0, 0))
+
+out2 <- radau(times = times, fun = fundae, y = yini, atol = 1e-10, rtol = 1e-10, mass = M, parms = NULL, nind = index)
+
+max (abs(out2[,"y1"] - cos(times)), abs(out2[,"y2"] + sin(times)))
+
+out3 <- gamd(times = times, fun = fundae, y = yini, atol = 1e-10, rtol = 1e-10, mass = M, parms = NULL, nind = index)
+
+max (abs(out3[,"y1"] - cos(times)), abs(out3[,"y2"] + sin(times)))
+
+## A Nonlinear Implicit ODE-----------------------------------------------------
+implicit <- function(t, y, dy, parms) {
+    list(t*yˆ2*dyˆ3 - yˆ3*dyˆ2 + t*(tˆ2+1)*dy - tˆ2*y)
+}
+yini <- sqrt(3/2)
+times <- seq(from = 1, to = 10, by = 0.1)
+
+library(rootSolve)
+rootfun <- function (dy, y, t)
+t*y^2*dy^3 - y^3*dy^2 + t*(t^2+1)*dy - t^2*y
+
+dyini <- multiroot(f = rootfun, start = 0, y = yini,t = times[1] )$root
+dyini
+
+out <- mebdfi(times = times, res = implicit, y = yini, dy = dyini, parms = NULL)
+out2 <- daspk (times = times, res = implicit, y = yini, dy = dyini, parms = NULL)
+
+max(abs(out [,2]- sqrt(times^2+0.5)))
+
+max(abs(out2[,2]- sqrt(times^2+0.5)))
+
+implicit2 <- function (t, y, p) {
+    f1 <- y[2]
+    f2 <- t*y[1]ˆ2*y[2]ˆ3-y[1]ˆ3*y[2]ˆ2+t*(tˆ2+1)*y[2]-tˆ2*y[1]
+    list(c(f1, f2))
+}
+M <- matrix(nrow = 2, ncol = 2, data = c(1, 0, 0, 0))
+yini_li <- c(yini, dyini)
+
+out3 <- bimd(times = times, fun = implicit2, y = yini_li, mass = M, parms = NULL)
+
+max(abs(out3[,2]- sqrt(times^2+0.5)))
+
+## A DAE of Index 3: The Pendulum Proble----------------------------------------
+
+library(deTestSet)
+pendulum <- function (t, y, dy, parms) {
+    list(c(-dy[1] + y[3] ,
+    -dy[2] + y[4] ,
+    -dy[3] -y[5]*y[1] ,
+    -dy[4] -y[5]*y[2] - 9.8,
+    y[1]^2 + y[2]^2 -1
+    ))
+}
+
+yini <- c(x = 1, y = 0, u = 0, v = 1 , lam = 1)
+dyini <- c(dx = 0,dy = 1,du = -1,dv = -9.8,dlam = 3*9.8)
+times <- seq(from = 0, to = 10, by = 0.01)
+index3 <- c(2, 2, 1)
+out3 <- mebdfi (y = yini, dy = dyini, res = pendulum, parms = NULL, times = times, nind = index3)
+
+plot(out3, lwd = 2)
+plot(out3[, 2:3])
+mtext(side = 3, outer = TRUE, line = -1.5, "Pendulum", cex = 1.5)
+
+## Multibody Systems------------------------------------------------------------
+# The Car Axis Problem----------------------------------------------------------
+caraxis <- function(t, y, dy, parms) {
+    with(as.list(y), {
+        f <- rep(0, 10)
+        yb <- r * sin(w * t)
+        xb <- sqrt(L^2 - yb^2)
+        Ll <- sqrt(xl^2 + yl^2)
+        Lr <- sqrt((xr - xb)^2 + (yr - yb)^2)
+        f[1:4] <- y[5:8]
+        f[5] <- 1/k*((L0-Ll)*xl/Ll + lam1*xb + 2*lam2*(xl-xr))
+        f[6] <- 1/k*((L0-Ll)*yl/Ll + lam1*yb + 2*lam2*(yl-yr)) -g
+        f[7] <- 1/k*((L0-Lr)*(xr - xb)/Lr - 2*lam2*(xl-xr))
+        f[8] <- 1/k*((L0-Lr)*(yr - yb)/Lr - 2*lam2*(yl-yr)) -g
+        f[9] <- xb * xl + yb * yl
+        f[10]<- (xl - xr)^2 + (yl - yr)^2 - L^2
+        delt <- dy - f
+        delt[9:10] <- -f[9:10]
+        list(delt)
+    })
+}
+
+eps <- 0.01; M <- 10; k <- M * eps * eps/2
+L <- 1; L0 <- 0.5; r <- 0.1; w <- 10; g <- 9.8
+
+yini <- c(xl = 0, yl = L0, xr = L, yr = L0, ul = -L0/L, vl = 0, ur = -L0/L, vr = 0, lam1 = 0, lam2 = 0)
+
+library(rootSolve)
+rootfun <- function (dyi, y, t)
+unlist(caraxis(t, y, dy = c(dyi, 0, 0), parms = NULL)) [1:8]
+
+dyini <- multiroot(f = rootfun, start = rep(0,8), y = yini, t = 0)$root
+(dyini <- c(dyini,0,0))
+
+caraxis(t = 0, yini, dyini, NULL)
+
+index <- c(4, 4, 2)
+times <- seq(from = 0, to = 3, by = 0.01)
+out <- mebdfi(y = yini, dy = dyini, times = times, res = caraxis, parms = parameter, nind = index)
+
+par(mar = c(4, 4, 3, 2))
+plot(out, lwd = 2, mfrow = c(4,3))
+plot(out[,c("xl", "yl")], xlab = "xleft", ylab = "yleft", type = "l", lwd = 2)
+plot(out[,c("xr", "yr")], xlab = "xright", ylab = "yright", type = "l", lwd = 2)
+
+## Electrical Circuit Models----------------------------------------------------
+#  The Transistor Amplifier-----------------------------------------------------
+library(deSolve)
+Transistor <- function(t, u, du, pars) {
+    delt <- vector(length = 8)
+    uin <- 0.1 * sin(200 * pi * t)
+    g23 <- beta * (exp( (u[2] - u[3]) / uf) - 1)
+    g56 <- beta * (exp( (u[5] - u[6]) / uf) - 1)
+    delt[1] <- (u[1] - uin)/R0
+    delt[2] <- u[2]/R1 + (u[2]-ub)/R2 + (1-alpha) * g23
+    delt[3] <- u[3]/R3 - g23
+    delt[4] <- (u[4] - ub) / R4 + alpha * g23
+    delt[5] <- u[5]/R5 + (u[5]-ub)/R6 + (1-alpha) * g56
+    delt[6] <- u[6]/R7 - g56
+    delt[7] <- (u[7] - ub) / R8 + alpha * g56
+    delt[8] <- u[8]/R9
+    list(delt)
+}
+
+ub <- 6; uf <- 0.026; alpha <- 0.99; beta <- 1e-6; R0 <- 1000
+R1 <- R2 <- R3 <- R4 <- R5 <- R6 <- R7 <- R8 <- R9 <- 9000
+C1 <- 1e-6; C2 <- 2e-6; C3 <- 3e-6; C4 <- 4e-6; C5 <- 5e-6
+
+mass <- matrix(nrow = 8, ncol = 8, byrow = TRUE, data = c(
+  -C1,C1, 0, 0, 0, 0, 0, 0,
+  C1,-C1, 0, 0, 0, 0, 0, 0,
+  0, 0,-C2, 0, 0, 0, 0, 0,
+  0, 0, 0,-C3, C3, 0, 0, 0,
+  0, 0, 0, C3,-C3, 0, 0, 0,
+  0, 0, 0, 0, 0,-C4, 0, 0,
+  0, 0, 0, 0, 0, 0,-C5, C5,
+  0, 0, 0, 0, 0, 0, C5,-C5
+  ))
+
+yini <- c(0, ub/(R2/R1+1), ub/(R2/R1+1), ub, ub/(R6/R5+1), ub/(R6/R5+1), ub, 0)
+names(yini) <- paste("u", 1:8, sep = "")
+
+ind <- c(8, 0, 0)
+times <- seq(from = 0, to = 0.2, by = 0.001)
+out <- radau(func = Transistor, y = yini, parms = NULL, times = times, mass = mass, nind = ind)
+
+plot(out, lwd = 2, which = c("u1", "u5", "u8"),
+mfrow = c(1, 3))
 
 
 ```
 
 ## Solving Delay Differential Equations in R------------------------------------
 ```{r, echo=FALSE}
+## Delay Differential Equation Solvers in R-------------------------------------
 
+#dede (y, times, func, parms, method, ...)
+#lagvalue (t, nr)
+#lagderiv (t, nr)
 
+## Two Simple Examples----------------------------------------------------------
+#  DDEs Involving Solution Delay Terms------------------------------------------
+
+library(deSolve)
+DDE1 <- function(t, y, parms) {
+    tlag <-t-1
+    if (tlag <= 0)
+    ylag <- 1
+    else
+    ylag <- lagvalue(tlag)
+    list(dy = - ylag, ylag = ylag)
+}
+yinit <- 1
+times <- seq(from = 0, to = 10, by = 0.1)
+yout <- dede(y = yinit, times = times, func = DDE1, parms = NULL)
+
+# DDEs Involving Derivative Delay Terms-----------------------------------------
+
+DDE2 <- function(t, y, parms) {
+    tlag <-t-1
+    if (tlag <= 0)
+    ylag <- 1
+    else
+    ylag <- lagderiv(tlag)
+    list(dy = - ylag, ylag = ylag)
+}
+yout2 <- dede(y = yinit, times = times, func = DDE2, parms = NULL)
+
+## Chaotic Production of White Blood Cells--------------------------------------
+
+library(deSolve)
+mackey <- function(t, y, parms, tau) {
+    tlag <- t - tau
+    if (tlag <= 0)
+    ylag <- 0.5
+    else
+    ylag <- lagvalue(tlag)
+    dy <- 0.2 * ylag * 1/(1+ylag^10) - 0.1 * y
+    list(dy = dy, ylag = ylag)
+}
+yinit <- 0.5
+times <- seq(from = 0, to = 300, by = 0.1)
+yout1 <- dede(y = yinit, times = times, func = mackey, parms = NULL, tau = 10)
+yout2 <- dede(y = yinit, times = times, func = mackey, parms = NULL, tau = 20)
+plot(yout1, lwd = 2, main = "tau = 10", ylab = "y", mfrow = c(2, 2), which = 1)
+plot(yout1[,-1], type = "l", lwd = 2, xlab = "y")
+plot(yout2, lwd = 2, main = "tau = 20", ylab = "y", mfrow = NULL, which = 1)
+plot(yout2[,-1], type = "l", lwd = 2, xlab = "y")
+
+##  A DDE Involving a Root Function---------------------------------------------
+
+xb <- -0.427; a <- 0.16; xi <- 0.02; u <- 0.5; tau <- 1
+yinit <- c(y = 0.6)
+mariott <- function(t, y, parms) {
+    tlag <- t - 12
+    if (tlag <= 0)
+    ylag <- 0.6
+    else
+    ylag <- lagvalue(tlag)
+    Delt <- ylag - xb
+    sDelt <- sign(Delt)
+    dy <- (-y + pi*(a + xi*sDelt - u*(sin(Delt))^2))/tau
+    list(dy)
+}
+times <- seq(from = 0, to = 120, by = 0.5)
+yout <- dede(y = yinit, times = times, func = mariott,
+parms = NULL)
+
+root <- function(t, y, parms) {
+    tlag <- t - 12
+    if (tlag <= 0)
+    return (1) # not a root
+    else
+    return(lagvalue(tlag)- xb)
+}
+event <- function(t, y, parms) return(y)
+yout <- dede(y = yinit, times = times, func = mariott, parms = NULL, rootfun = root, events = list(func = event, root = TRUE))
+attributes(yout)$troot
+
+plot(yout, lwd = 2, main = "Mariott-Delisle Controller problem")
+abline(v = attributes(yout)$troot, col = "grey")
+
+## Vanishing Time Delays--------------------------------------------------------
+
+vanishing <- function(t, y, parms, cc) {
+        tlag <- t*y^2
+        if (tlag <= 0) {
+        ylag <- 0
+        dylag <- 0
+        } else {
+            ylag <- lagvalue(tlag)
+            dylag <- lagderiv(tlag)
+        }
+    dy <- cos(t)*(1+ylag) + cc*y*dylag + (1-cc)*sin(t)*cos(t*sin(t)^2) - sin(t+t*sin(t)^2)
+    list(dy)
+}
+yinit <- c(y = 0)
+times <- seq(from = 0, to = 2*pi, by = 0.1)
+yout <- dede(y = 0, times = times, func = vanishing,
+parms = NULL,cc = -0.5, atol = 1e-10, rtol = 1e-10)
+
+print(max(abs(yout[,2] - sin(yout[,1]))))
+
+## Predator-Prey Dynamics with Harvesting---------------------------------------
+
+LVdede <- function(t, y, p) {
+    if (t > tau1) Lag1 <- lagvalue(t - tau1) else Lag1 <- yini
+    if (t > tau2) Lag2 <- lagvalue(t - tau2) else Lag2 <- yini
+    dy1 <- r * y[1] *(1 - Lag1[1]/K) - a*y[1]*y[2]
+    dy2 <- a * b * Lag2[1]*Lag2[2] - d*y[2]
+    list(c(dy1, dy2))
+}
+
+rootfun <- function(t, y, p)
+return(y[1] - Ycrit)
+eventfun <- function(t, y, p)
+return (c(y[1] * 0.7, y[2]))
+
+r <- 1; K <- 1; a <- 2; b <- 1; d <- 1; Ycrit <- 1.2*d/(a*b)
+tau1 <- 0.2; tau2 <- 0.2
+yini <- c(y1 = 0.2, y2 = 0.1)
+times <- seq(from = 0, to = 200, by = 0.01)
+yout <- dede(func = LVdede, y = yini, times = times, parms = 0, rootfun = rootfun, events = list(func = eventfun, root = TRUE))
+attributes(yout)$troot [1:10]
+
+plot(yout[,-1], type = "l")
 
 ```
 
 ## Solving Partial Differential Equations in R----------------------------------
 ```{r, echo=FALSE}
+## Methods for Solving PDEs in R------------------------------------------------
+# Numerical Approximations------------------------------------------------------
+library(ReacTran)
+# Setting up a Grid
+# setup.grid.1D(x.up, x.down, L, N, ...)
+# setup.grid.2D(x.grid, y.grid)
 
-##  The heat Equation-----------------------------------------------------------
+# Numerical Approximation of Advection and Diffusion
+# tran.1D(C, C.up, C.down, flux.up, flux.down, D, v, A, dx, ...)
+# tran.2D(C, C.x.up, C.x.down, C.y.up, C.y.down, flux.x.up, flux.x.down, flux.y.up, flux.y.down, D.x, D.y, v.x, v.y, A.x, A.y, dx, dy,...)
+# tran.polar(C, C.r.up, C.r.down, C.theta.up, C.theta.down, flux.r.up, flux.r.down,flux.theta.up, flux.theta.down, D.r, D.theta, r, theta, ...)
+# advection.1D(C, C.up, C.down, flux.up, flux.down, v, A, dx, adv.method, ...)
+
+#  Solution Methods-------------------------------------------------------------
+# ode.1D(y, times, func, parms, dimens, method, ...)
+# ode.2D(y, times, func, parms, dimens, method, ...)
+# steady.1D(y, func, parms, dimens, method, ...)
+# steady.2D(y, func, parms, dimens, method, ...)
+
+## Solving Parabolic, Elliptic and Hyperbolic PDEs in R-------------------------
+# The heat Equation-------------------------------------------------------------
 N <- 100
 xgrid <- setup.grid.1D(x.up = 0, x.down = 1, N = N)
 x <- xgrid$x.mid
@@ -216,6 +696,163 @@ for (i in seq(2, length(times), by = 50))
 lines(out[i, 2:(N+1)], x)
 image(out, grid = x, mfrow = NULL, ylab = "Distance, x", main = "Y")
 
+# The Wave Equation-------------------------------------------------------------
+library(ReacTran)
+dx <- 0.2
+xgrid <- setup.grid.1D(x.up = -100, x.down = 100, dx.1 = dx)
+x <- xgrid$x.mid
+N <- xgrid$N
+lam <- 0.05
+uini <- exp(-lam*x^2)
+vini <- rep(0, N)
+yini <- c(uini, vini)
+times <- seq (from = 0, to = 50, by = 1)
+wave <- function (t, y, parms) {
+    u <- y[1:N]
+    v <- y[(N+1):(2*N)]
+    du <- v
+    dv <- tran.1D(C = u, C.up = 0, C.down = 0, D = 1,
+    dx = xgrid)$dC
+    return(list(c(du, dv)))
+}
+out <- ode.1D(func = wave, y = yini, times = times,
+parms = NULL, method = "adams", dimens = N, names = c("u", "v"))
+u <- subset(out, which = "u")
+
+analytic <- function (t, x)
+0.5 * (exp(-lam * (x+1*t)^2 ) +exp(-lam * (x-1*t)^2) )
+OutAna <- outer(times, x, FUN = analytic)
+
+max(abs(u - OutAna))
+
+outtime <- seq(from = 0, to = 50, by = 10)
+matplot.1D(out, which = "u", subset = time %in% outtime, grid = x, xlab = "x", ylab = "u", type = "l", lwd = 2, xlim = c(-50, 50), col = c("black", rep("darkgrey", 5)))
+legend("topright", lty = 1:6, lwd = 2, col = c("black", rep("darkgrey", 5)), title = "t = ", legend = outtime)
+
+plot.1D(out, grid = x, which = "u", type = "l", lwd = 2, ylim = c(0,1), ask = TRUE)
+
+#  Poisson and Laplace’s Equation-----------------------------------------------
+Nx <- 100
+Ny <- 100
+xgrid <- setup.grid.1D (x.up = 0, x.down = 1, N = Nx)
+ygrid <- setup.grid.1D (x.up = 0, x.down = 1, N = Ny)
+x <- xgrid$x.mid
+y <- ygrid$x.mid
+
+laplace <- function(t, U, parms) {
+    w <- matrix(nrow = Nx, ncol = Ny, data = U)
+    dw <- tran.2D(C = w, C.x.up = 0, C.x.down = 0,
+    flux.y.up = 0,
+    flux.y.down = -1 * sin(pi*x)*pi*sinh(pi),
+    D.x = 1, D.y = 1,
+    dx = xgrid, dy = ygrid)$dC
+    list(dw)
+}
+
+print(system.time( out <- steady.2D(y = runif(Nx*Ny), func = laplace, parms = NULL, nspec = 1, dimens = c(Nx, Ny), lrw = 1e7)))
+
+w <- matrix(nrow = Nx, ncol = Ny, data = out$y)
+analytic <- function (x, y) sin(pi*x) * cosh(pi*y)
+OutAna <- outer(x, y, FUN = analytic)
+max(abs(w - OutAna))
+
+image(out, grid = list(x, y), main = "elliptic Laplace", add.contour = TRUE)
+
+#  The Advection Equation-------------------------------------------------------
+
+adv.func <- function(t, y, p, adv.method)
+list(advection.1D(C = y, C.up = y[N], C.down = y[1],
+v = 0.1, adv.method = adv.method,
+dx = xgrid)$dC)
+xgrid <- setup.grid.1D(0.3, 1.3, N = 50)
+x <- xgrid$x.mid
+N <- length(x)
+yini <- sin(pi * x)^50
+times <- seq(0, 20, 0.01)
+out1 <- ode.1D(y = yini, func = adv.func, times = times,
+parms = NULL, method = "euler", dimens = N, adv.method = "muscl")
+out2 <- ode.1D(y = yini, func = adv.func, times = times, parms = NULL, method = "euler", dimens = N, adv.method = "super")
+
+plot.1D(out1, ylim = c(0, 1), type = "l", lwd = 2, main = "muscl")
+plot.1D(out2, ylim = c(0, 1), type = "l", lwd = 2, main = "superbee")
+
+## More Complex Examples--------------------------------------------------------
+# The Brusselator in One Dimension----------------------------------------------
+library(ReacTran)
+N <- 50
+Grid <- setup.grid.1D(x.up = 0, x.down = 1, N = N)
+x1ini <- 1 + sin(2 * pi * Grid$x.mid)
+x2ini <- rep(x = 3, times = N)
+yini <- c(x1ini, x2ini)
+brusselator1D <- function(t, y, parms) {
+    X1 <- y[1:N]
+    X2 <- y[(N+1):(2*N)]
+    dX1 <- 1 + X1^2*X2 - 4*X1 + tran.1D (C = X1, C.up = 1, C.down = 1, D = 0.02, dx = Grid)$dC
+    dX2 <- 3*X1 - X1^2*X2 + tran.1D (C = X2, C.up = 3, C.down = 3, D = 0.02, dx = Grid)$dC
+    list(c(dX1, dX2))
+}
+
+times <- seq(from = 0, to = 10, by = 0.1)
+print(system.time( out <- ode.1D(y = yini, func = brusselator1D, times = times, parms = NULL, nspec = 2, names = c("X1", "X2"), dimens = N)))
+
+par(mfrow = c(2, 2))
+image(out, mfrow = NULL, grid = Grid$x.mid, which = "X1", method = "contour")
+image(out, mfrow = NULL, grid = Grid$x.mid, which = "X1")
+par(mar = c(1, 1, 1, 1))
+image(out, mfrow = NULL, grid = Grid$x.mid, which = "X1", method = "persp", col = NA)
+image(out, mfrow = NULL, grid = Grid$x.mid, which = "X1", method = "persp", border = NA, shade = 0.3 )
+
+# The Brusselator in Two Dimensions---------------------------------------------
+brusselator2D <- function(t, y, parms) {
+    X1 <- matrix(nrow = Nx, ncol = Ny, data = y[1:(Nx*Ny)])
+    X2 <- matrix(nrow = Nx, ncol = Ny, data = y[(Nx*Ny+1) : (2*Nx*Ny)])
+    dX1 <- 1 + X1^2*X2 - 4*X1 + tran.2D (C = X1, D.x = D_X1, D.y = D_X1, dx = Gridx, dy = Gridy)$dC
+    dX2 <- 3*X1 - X1^2*X2 + tran.2D (C = X2, D.x = D_X2, D.y = D_X2, dx = Gridx, dy = Gridy)$dC
+    list(c(dX1, dX2))
+}
+
+library(ReacTran)
+Nx <- 50
+Ny <- 50
+Gridx <- setup.grid.1D(x.up = 0, x.down = 1, N = Nx)
+Gridy <- setup.grid.1D(x.up = 0, x.down = 1, N = Ny)
+
+D_X1 <- 2
+D_X2 <- 8*D_X1
+
+X1ini <- matrix(nrow = Nx, ncol = Ny, data = runif(Nx*Ny))
+X2ini <- matrix(nrow = Nx, ncol = Ny, data = runif(Nx*Ny))
+yini <- c(X1ini, X2ini)
+
+times <- 0:8
+print(system.time(
+out <- ode.2D(y = yini, parms = NULL, func = brusselator2D, nspec = 2, dimens = c(Nx, Ny), times = times, lrw = 2000000, names=c("X1", "X2"))))
+
+par(oma = c(0,0,1,0))
+image(out, which = "X1", xlab = "x", ylab = "y", mfrow = c(3, 3), ask = FALSE, main = paste("t = ", times), grid = list(x = Gridx$x.mid, y = Gridy$x.mid))
+mtext(side = 3, outer = TRUE, cex = 1.25, line = -1, "2-D Brusselator, species X1")
+
+# Laplace Equation in Polar Coordinates-----------------------------------------
+
+library(ReacTran)
+Nr <- 100
+Np <- 100
+r <- seq(2, 4, len = Nr+1)
+theta <- seq(0, 2*pi, len = Np+1)
+theta.mid <- 0.5*(theta[-1] + theta[-Np])
+Model <- function(t, C, p) {
+    y = matrix(nrow = Nr, ncol = Np, data = C)
+    tran <- tran.polar (y, D.r = 1, r = r, theta = theta,
+    C.r.up = 0, C.r.down = 4 * sin(5*theta.mid),
+    cyclicBnd = 2)
+    list(tran$dC)
+}
+STD <- steady.2D(y = runif(Nr*Np), parms = NULL, func = Model, dimens = c(Nr, Np), lrw = 1e6, cyclicBnd = 2)
+OUT <- polar2cart (STD, r = r, theta = theta, x = seq(-4, 4, len = 400), y = seq(-4, 4, len = 400))
+image(OUT, main = "Laplace")
+
+# The Time-Dependent 2-D Sine-Gordon Equation
+# p177
 
 
 ```
